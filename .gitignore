@@ -1,0 +1,33 @@
+# Python / venv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Models & outputs (large/binary)
+models/
+outputs/
+*.ts
+*.onnx
+*.pt
+*.pth
+*.bin
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Audio test files (user-provided, not committed)
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.m4a
+!scripts/*.wav
+
+# Logs
+*.log
