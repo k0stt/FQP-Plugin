@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Deterministic checkpoint reconstruction on the fixed RAVE validation split.
+"""Seeded checkpoint reconstruction on the fixed RAVE validation split.
 
 The split is by preprocessed crop (seed 42), NOT by song: these scores do not
 measure generalization to unseen songs. Evaluates the un-exported 128-D model.
@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from scipy.signal import correlate, correlation_lags
 
-from rave_reconstruct import integrity, spectral_metrics
+from rave_reconstruct import encode_deterministic, integrity, spectral_metrics
 
 
 def align_signals(x: np.ndarray, y: np.ndarray, sr: int):
@@ -33,7 +33,7 @@ def align_signals(x: np.ndarray, y: np.ndarray, sr: int):
     return x, y, lag
 
 
-def evaluate(checkpoint: Path, config: Path, count: int) -> dict:
+def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path = None) -> dict:
     import rave
     from rave import dataset
 
@@ -43,6 +43,9 @@ def evaluate(checkpoint: Path, config: Path, count: int) -> dict:
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)
     model.load_state_dict(state["state_dict"], strict=True)
     model.eval()
+    baseline = torch.jit.load(str(reference_model), map_location="cpu").eval() if reference_model else None
+    if baseline is not None and int(baseline.sr) != model.sr:
+        raise ValueError("Reference model sample rate differs from training model")
     # Training split is seeded inside RAVE; use unaugmented raw crops for evaluation.
     raw = dataset.AudioDataset("data/processed", n_channels=1)
     _, val = dataset.split_dataset(raw, 98)
@@ -58,9 +61,14 @@ def evaluate(checkpoint: Path, config: Path, count: int) -> dict:
                 raise ValueError(f"Validation crop {i} shorter than {n}")
             start = (x.shape[-1] - n) // 2
             reference = x[0, start:start + n]
-            z = model.encode(torch.from_numpy(reference.copy()).reshape(1, 1, -1))
+            xt = torch.from_numpy(reference.copy()).reshape(1, 1, -1)
+            z = model.encode(xt)
             mean = z[:, :z.shape[1] // 2]
-            y = model.decode(mean).squeeze().numpy()
+            # GeneratorV2's NoiseGeneratorV2 samples torch.rand_like even in eval().
+            # Reset per crop AND per model to avoid order-dependent comparisons.
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(111 + int(val.indices[i]))
+                y = model.decode(mean).squeeze().numpy()
             check = integrity(y, model.sr)
             if check["n_nonfinite"] or check["rms"] <= 0:
                 raise ValueError(f"Invalid reconstruction {i}: {check}")
@@ -69,11 +77,20 @@ def evaluate(checkpoint: Path, config: Path, count: int) -> dict:
             aligned = spectral_metrics(aligned_x, aligned_y, model.sr)
             correlation = float(np.dot(aligned_x.astype(np.float64), aligned_y.astype(np.float64)) /
                                 (np.linalg.norm(aligned_x) * np.linalg.norm(aligned_y) + 1e-12))
-            rows.append({"validation_index": int(val.indices[i]), "latent_frames": mean.shape[-1],
+            row = {"validation_index": int(val.indices[i]), "latent_frames": mean.shape[-1],
                          "output_samples": len(y), "integrity": check, "quality_unaligned": metrics,
                          "lag_samples_cross_correlation": lag, "aligned_correlation": correlation,
-                         "quality_aligned": aligned})
-    return {"epoch": state["epoch"], "step": state["global_step"], "sr": model.sr,
+                         "quality_aligned": aligned}
+            if baseline is not None:
+                baseline_z = encode_deterministic(baseline, xt)
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(111 + int(val.indices[i]))
+                    baseline_y = baseline.decode(baseline_z, True).squeeze().numpy()
+                row["pretrained"] = {
+                    "latent_shape": list(baseline_z.shape), "integrity": integrity(baseline_y, model.sr),
+                    "quality_unaligned": spectral_metrics(reference, baseline_y, model.sr)}
+            rows.append(row)
+    report = {"epoch": state["epoch"], "step": state["global_step"], "sr": model.sr,
             "latent_channels": model.latent_size, "samples": rows,
             "mean_spectral_convergence_unaligned": float(np.mean([
                 r["quality_unaligned"]["spectral_convergence_mean"] for r in rows])),
@@ -83,6 +100,13 @@ def evaluate(checkpoint: Path, config: Path, count: int) -> dict:
                 r["quality_aligned"]["spectral_convergence_mean"] for r in rows])),
             "mean_lsd_aligned": float(np.mean([
                 r["quality_aligned"]["log_spectral_distance_mean"] for r in rows]))}
+    if baseline is not None:
+        report["pretrained_model"] = str(reference_model)
+        report["pretrained_mean_sc_unaligned"] = float(np.mean([
+            r["pretrained"]["quality_unaligned"]["spectral_convergence_mean"] for r in rows]))
+        report["pretrained_mean_lsd_unaligned"] = float(np.mean([
+            r["pretrained"]["quality_unaligned"]["log_spectral_distance_mean"] for r in rows]))
+    return report
 
 
 if __name__ == "__main__":
@@ -90,9 +114,10 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=Path("configs/lofi_v2_nwn.gin"))
     parser.add_argument("--count", type=int, default=3)
+    parser.add_argument("--reference-model", type=Path, help="optional pretrained TorchScript baseline")
     parser.add_argument("--output", type=Path, default=Path("outputs/stage1b/evaluation.json"))
     args = parser.parse_args()
-    result = evaluate(args.checkpoint, args.config, args.count)
+    result = evaluate(args.checkpoint, args.config, args.count, args.reference_model)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps({k: v for k, v in result.items() if k != "samples"}, indent=2))
