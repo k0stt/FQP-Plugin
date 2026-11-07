@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from evaluate_training import align_signals
+from evaluate_training import align_signals, listening_pair
 
 
 class AlignmentTests(unittest.TestCase):
@@ -13,6 +13,16 @@ class AlignmentTests(unittest.TestCase):
         aligned_x, aligned_y, lag = align_signals(x, y, 44100)
         self.assertEqual(lag, 137)
         np.testing.assert_array_equal(aligned_x, aligned_y)
+
+    def test_listening_fade_preserves_common_gain(self):
+        x = np.ones(1000) * .5
+        y = np.ones(1000) * 2
+        a, b = listening_pair(x, y, 1000, 10)
+        self.assertEqual(float(a[0]), 0.)
+        self.assertEqual(float(b[-1]), 0.)
+        self.assertAlmostEqual(float(b[500]), .9)
+        self.assertAlmostEqual(float(b[500] / a[500]), 4.)
+        self.assertRaises(ValueError, listening_pair, x, y, 1000, 600)
 
     def test_negative_delay(self):
         x = np.random.default_rng(21).normal(size=4000)
