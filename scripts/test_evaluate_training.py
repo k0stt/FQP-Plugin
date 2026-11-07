@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from evaluate_training import align_signals, listening_pair
+from evaluate_training import align_signals, holdout_files, listening_pair
 
 
 class AlignmentTests(unittest.TestCase):
@@ -23,6 +23,11 @@ class AlignmentTests(unittest.TestCase):
         self.assertAlmostEqual(float(b[500]), .9)
         self.assertAlmostEqual(float(b[500] / a[500]), 4.)
         self.assertRaises(ValueError, listening_pair, x, y, 1000, 600)
+
+    def test_holdout_rejects_content_overlap(self):
+        manifest = {"train": [{"path": "a", "sha256": "same"}],
+                    "holdout": [{"path": "b", "sha256": "same"}]}
+        self.assertRaises(ValueError, holdout_files, manifest)
 
     def test_negative_delay(self):
         x = np.random.default_rng(21).normal(size=4000)

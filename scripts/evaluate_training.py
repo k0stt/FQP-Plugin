@@ -6,6 +6,7 @@ measure generalization to unseen songs. Evaluates the un-exported 128-D model.
 Only load trusted local checkpoints (torch.load uses pickle).
 """
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -48,6 +49,16 @@ def listening_pair(x: np.ndarray, y: np.ndarray, sr: int, fade_ms: float):
             result[-n:] *= envelope[::-1]
         return result
     return apply(x), apply(y)
+
+
+def holdout_files(manifest: dict) -> list[Path]:
+    train = manifest["train"]
+    holdout = manifest["holdout"]
+    if not holdout or set(item["path"] for item in train) & set(
+            item["path"] for item in holdout) or set(item["sha256"] for item in train) & set(
+            item["sha256"] for item in holdout):
+        raise ValueError("Missing holdout or train/holdout song overlap")
+    return [Path(item["path"]) for item in holdout]
 
 
 def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path = None,
@@ -134,6 +145,8 @@ def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path =
     report = {"epoch": state["epoch"], "step": state["global_step"], "sr": model.sr,
             "evaluation_set": "external_files" if external_files else "rave_crop_validation",
             "latent_channels": model.latent_size, "samples": rows,
+            "nonfinite_samples": sum(r["integrity"]["n_nonfinite"] for r in rows),
+            "overrange_crops": sum(r["integrity"]["peak"] > 1 for r in rows),
             "mean_spectral_convergence_unaligned": float(np.mean([
                 r["quality_unaligned"]["spectral_convergence_mean"] for r in rows])),
             "mean_lsd_unaligned": float(np.mean([
@@ -160,11 +173,22 @@ if __name__ == "__main__":
     parser.add_argument("--audio-dir", type=Path, help="write matching gain input/output WAV pairs")
     parser.add_argument("--fade-ms", type=float, default=0,
                         help="optional identical edge fade for listening WAVs only")
-    parser.add_argument("--external", type=Path, nargs="+", help="independent audio files (center 3 s)")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--external", type=Path, nargs="+", help="independent audio files (center 3 s)")
+    source.add_argument("--holdout-manifest", type=Path,
+                        help="evaluate every song in the v2 holdout manifest (center 3 s)")
     parser.add_argument("--output", type=Path, default=Path("outputs/stage1b/evaluation.json"))
     args = parser.parse_args()
+    external = args.external
+    if args.holdout_manifest:
+        manifest_bytes = args.holdout_manifest.read_bytes()
+        manifest = json.loads(manifest_bytes)
+        external = holdout_files(manifest)
     result = evaluate(args.checkpoint, args.config, args.count, args.reference_model,
-                      args.audio_dir, args.external, args.fade_ms)
+                      args.audio_dir, external, args.fade_ms)
+    if args.holdout_manifest:
+        result["evaluation_set"] = "song_disjoint_holdout_v2"
+        result["holdout_manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps({k: v for k, v in result.items() if k != "samples"}, indent=2))
