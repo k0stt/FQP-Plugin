@@ -5,6 +5,7 @@ Usage: .venv/Scripts/python scripts/check_training.py --checkpoint runs/.../best
 Only load checkpoints from trusted local runs (torch serialization uses pickle).
 """
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -24,18 +25,25 @@ def audit_data(root: Path) -> dict:
     if len(names) != len(set(names)) or not names or set(names) != set(raw):
         raise ValueError(f"Manifest/raw mismatch: missing={set(names)-set(raw)}, extra={set(raw)-set(names)}")
     duration = 0.0
+    fingerprint = hashlib.sha256()
     for name in names:
         info = sf.info(str(raw[name]))
         if info.duration <= 0 or info.samplerate <= 0 or info.channels <= 0:
             raise ValueError(f"Invalid audio: {name}")
         duration += info.duration
+        file_hash = hashlib.sha256()
+        with raw[name].open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                file_hash.update(chunk)
+        fingerprint.update(name.encode("utf-8") + b"\0" + file_hash.digest())
     if metadata["sr"] != 44100 or metadata["channels"] != 1 or metadata["n_seconds"] <= 0:
         raise ValueError(f"Unexpected preprocessed metadata: {metadata}")
     if not (root / "processed/data.mdb").stat().st_size:
         raise ValueError("Empty preprocessed LMDB")
     return {"files": len(names), "raw_hours": round(duration / 3600, 3),
             "processed_hours": round(metadata["n_seconds"] / 3600, 3),
-            "sample_rate": metadata["sr"], "channels": metadata["channels"]}
+            "sample_rate": metadata["sr"], "channels": metadata["channels"],
+            "raw_dataset_sha256": fingerprint.hexdigest()}
 
 
 def audit_checkpoint(path: Path, config: Path) -> dict:
