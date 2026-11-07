@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Audit frozen song holdout, hardlinks and the preprocessed LMDB."""
+"""Проверяет разделение песен, жёсткие ссылки и подготовленную LMDB."""
 import argparse
 import json
 import os

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Проверка тех же одиночных нот и тишины на предобученной RAVE."""
+"""Проверяет тишину и одиночные ноты на предобученной RAVE."""
 import argparse
 import hashlib
 import json
@@ -35,7 +35,7 @@ def save(path: Path, x: np.ndarray, sr: int, gain: float) -> None:
 
 
 def reconstruct_fresh(model_path: Path, x: np.ndarray, seed: int = 111) -> tuple[np.ndarray, int]:
-    """Один encode/decode на отдельном экземпляре: состояние не переходит между файлами."""
+    """Загружает модель заново, чтобы состояние не переходило между файлами."""
     model = torch.jit.load(str(model_path), map_location="cpu").eval()
     sr = int(model.sr)
     with torch.inference_mode(), torch.random.fork_rng(devices=[]):
@@ -49,7 +49,6 @@ def reconstruct_fresh(model_path: Path, x: np.ndarray, seed: int = 111) -> tuple
 
 
 def run(model_path: Path, input_dir: Path, output: Path) -> dict:
-    # Порядок соответствует исходной проверке: три ноты пианино, затем гитара.
     files = sorted(input_dir.glob("*.wav"), key=lambda path: (not path.stem.startswith("piano_"), path.name))
     if not files:
         raise ValueError("Не найдены подготовленные WAV")

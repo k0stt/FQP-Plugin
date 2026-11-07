@@ -1,9 +1,8 @@
 #!/usr/bin/env python
-"""Freeze a song-disjoint, content-fingerprinted RAVE v2 corpus.
+"""Фиксирует состав корпуса v2 и разделяет его на обучение и контроль по песням.
 
-Only metadata is written to data/v2/manifest.json. With --link-training,
-hardlink training MP3s into data/v2/train for rave preprocess; original files
-are never moved or overwritten. Holdout songs are NOT linked into that folder.
+С --link-training создаёт жёсткие ссылки только для обучающих MP3; исходники
+не перемещает.
 """
 import argparse
 import hashlib

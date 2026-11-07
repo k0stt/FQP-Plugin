@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Paired checkpoint comparison on identical evaluated songs (not a significance test)."""
+"""Сравнивает checkpoint на одних и тех же песнях без оценки значимости."""
 import argparse
 import json
 from pathlib import Path

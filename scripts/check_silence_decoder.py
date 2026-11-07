@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Проверка декодера: zero_input.wav — тишина, zero_input_reconstruction.wav — выход модели."""
+"""Сравнивает выход модели на тишине и на двух одиночных нотах."""
 import argparse
 import json
 from pathlib import Path
@@ -60,7 +60,7 @@ def run(checkpoint: Path, config: Path, note: Path, other_note: Path, output: Pa
                 out = model.decode(mean)
         return out.squeeze().numpy().copy()
 
-    pad = 43 * 512  # ~0.499 с с обеих сторон; длина остаётся кратной латентному шагу
+    pad = 43 * 512  # Почти полсекунды контекста с каждой стороны.
     with torch.inference_mode():
         full = decode(x, 111)
         second = decode(other, 111)

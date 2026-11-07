@@ -1,8 +1,7 @@
 #!/usr/bin/env python
-"""Check a preprocessed RAVE dataset and optionally a saved training checkpoint.
+"""Проверяет подготовленный корпус и, если указан, checkpoint RAVE.
 
-Usage: .venv/Scripts/python scripts/check_training.py --checkpoint runs/.../best.ckpt
-Only load checkpoints from trusted local runs (torch serialization uses pickle).
+Checkpoint загружается через pickle; использовать только доверенные файлы.
 """
 import argparse
 import hashlib
@@ -55,7 +54,7 @@ def audit_checkpoint(path: Path, config: Path) -> dict:
     model.load_state_dict(ckpt["state_dict"], strict=True)
     model.eval()
     sr = model.sr
-    # Short raw passage for an inference smoke test; NOT a held-out quality set.
+    # Короткий фрагмент проверяет запуск, а не качество на новых данных.
     raw_file = sorted(Path("data/raw/openlofi").glob("*.mp3"))[0]
     import soxr
     samples, source_sr = sf.read(str(raw_file), frames=int(sf.info(str(raw_file)).samplerate * 3),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Pitch-class diagnostics on listening pairs; not a perceptual quality score.
+"""Измеряет высотные классы и гармоническую долю в парных WAV.
 
-Run: .venv/Scripts/python scripts/diagnose_reconstruction.py outputs/stage1b/external_listen
+Эти показатели не заменяют прослушивание.
 """
 import argparse
 import json
@@ -14,7 +14,7 @@ from scipy.signal import stft
 
 
 def pitch_classes(x: np.ndarray, sr: int) -> np.ndarray:
-    """Average energy in 12 equal-tempered pitch classes, 80..2000 Hz."""
+    """Считает энергию двенадцати высотных классов в диапазоне 80–2000 Гц."""
     f, _, z = stft(x, fs=sr, nperseg=8192, noverlap=6144, boundary=None)
     mask = (f >= 80) & (f <= 2000)
     midi = np.rint(69 + 12 * np.log2(f[mask] / 440)).astype(int)
@@ -23,7 +23,7 @@ def pitch_classes(x: np.ndarray, sr: int) -> np.ndarray:
 
 
 def harmonic_energy_fraction(x: np.ndarray, sr: int) -> float:
-    """Approximate median-filter HPSS harmonic fraction; not a quality score."""
+    """Оценивает гармоническую долю через медианную фильтрацию HPSS."""
     _, _, z = stft(x, fs=sr, nperseg=2048, noverlap=1536)
     spectrum = np.abs(z)
     harmonic = median_filter(spectrum, size=(1, 31))

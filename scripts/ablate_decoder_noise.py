@@ -1,9 +1,7 @@
 #!/usr/bin/env python
-"""Reconstruct with/without NoiseGeneratorV2, WITHOUT changing saved weights.
+"""Сравнивает реконструкции с шумовой ветвью и без неё, не меняя веса.
 
-Diagnostic ablation only: a decoder trained WITH noise is not guaranteed to
-sound right when its noise branch is silenced. Never use these values as proof
-that a different architecture has been trained.
+Отключение ветви — диагностический опыт, а не проверка другой обученной модели.
 """
 import argparse
 import json
@@ -21,7 +19,7 @@ from rave_reconstruct import integrity, spectral_metrics
 
 
 def disable_noise_forward(module):
-    """Return a temporary mock leaving the module and every parameter intact."""
+    """Временно заменяет выход шумовой ветви, не меняя её параметры."""
     original = module.forward
     return patch.object(module, "forward", side_effect=lambda x: torch.zeros_like(original(x)))
 

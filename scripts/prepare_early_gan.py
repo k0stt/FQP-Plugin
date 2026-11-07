@@ -1,10 +1,8 @@
 #!/usr/bin/env python
-"""Fork a trusted RAVE checkpoint into an experimental shorter phase-1 run.
+"""Готовит отдельный опыт с более ранним запуском GAN.
 
-This copies the checkpoint and changes ONLY RAVE.phase_1_duration in its Gin
-config. Optimizer, LR scheduler (still 1,000,000 iterations), and callback step
-remain from the source checkpoint. It is a new EXPERIMENT, not the original run.
-Run only on local trusted checkpoints (torch.load uses pickle).
+Копирует checkpoint и меняет только длительность первого этапа в Gin;
+остальное состояние обучения сохраняется. Загружать только доверенные веса.
 """
 import argparse
 import hashlib

@@ -1,15 +1,8 @@
 #!/usr/bin/env python
-"""E0: реконструкция RAVE — baseline (Этап 1).
+"""Реконструирует аудио предобученной RAVE и сохраняет WAV с отчётом.
 
-Запуск (из корня репозитория):
-    .venv\\Scripts\\python.exe scripts\\rave_reconstruct.py --input <audio> [--device cuda]
-
-Протокол воспроизводимости: свежий процесс + фиксированный seed.
-encode() использует aten::randn (сэмплирование постериора VAE), поэтому
-повторные вызовы encode в одном процессе недетерминированы; воспроизводимость
-обеспечивается одним encode на процесс при torch.manual_seed(SEED).
-
-Выход: outputs/e0/<имя_файла>/reconstruction.wav + report.json
+Для сравнения используется среднее постериора; задержка на импульсе
+измеряется отдельно, в новом процессе.
 """
 import argparse
 import hashlib
@@ -28,12 +21,10 @@ SEED = 111
 MODEL_PATH = Path("models/musicnet.ts")
 
 
-# ---------- I/O ----------
-
 def load_audio(path: Path, sr_target: int) -> tuple[np.ndarray, int]:
-    """Загрузка аудио, даунмикс в моно, ресемплинг при необходимости."""
+    """Переводит аудио в моно и частоту модели."""
     x, sr = sf.read(str(path), always_2d=True, dtype="float32")
-    x = x.mean(axis=1)  # моно
+    x = x.mean(axis=1)
     if sr != sr_target:
         import soxr
         x = soxr.resample(x, sr, sr_target, quality="HQ")
@@ -47,10 +38,8 @@ def save_wav(path: Path, y: np.ndarray, sr: int) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-# ---------- Метрики ----------
-
 def spectral_metrics(x: np.ndarray, y: np.ndarray, sr: int) -> dict:
-    """Мультимасштабные спектральные метрики (нормированы на длину)."""
+    """Считает спектральные расстояния на трёх размерах окна."""
     n = min(len(x), len(y))
     x, y = x[:n].astype(np.float64), y[:n].astype(np.float64)
     out = {}
@@ -64,9 +53,7 @@ def spectral_metrics(x: np.ndarray, y: np.ndarray, sr: int) -> dict:
         idx = np.arange(fft)[None, :] + hop * np.arange(frames)[:, None]
         X = np.abs(np.fft.rfft(x[idx] * win, axis=1))
         Y = np.abs(np.fft.rfft(y[idx] * win, axis=1))
-        # spectral convergence (архивная метрика, Caillon & Esling 2021 §уз)
         sc = np.linalg.norm(X - Y) / (np.linalg.norm(X) + 1e-12)
-        # лог-спектральное расстояние log1p (устойчиво к тишине)
         lsd = np.sqrt(np.mean((np.log1p(X) - np.log1p(Y)) ** 2))
         sc_all.append(sc)
         lsd_all.append(lsd)
@@ -78,19 +65,17 @@ def spectral_metrics(x: np.ndarray, y: np.ndarray, sr: int) -> dict:
 
 
 def integrity(y: np.ndarray, sr: int) -> dict:
-    """Целостность сигнала: NaN/Inf, клиппинг, тишина/разрывы."""
+    """Проверяет пики, неконечные значения и длинные участки тишины."""
     finite = np.isfinite(y)
     absy = np.abs(y)
     thr = 1e-4
     quiet = absy < thr
-    # длинные тихие участки (>= 20 мс) внутри активной части — «разрывы»
     min_len = int(0.020 * sr)
     runs, cur = [], 0
     for q in quiet:
         cur = cur + 1 if q else 0
         if cur >= min_len:
             runs.append(cur)
-    # учитываем только разрывы не в начале и не в конце
     edge = quiet[:min_len].all(), quiet[-min_len:].all()
     body_breaks = 0
     in_silence = False
@@ -114,7 +99,7 @@ def integrity(y: np.ndarray, sr: int) -> dict:
 
 
 def impulse_latency(model, device, sr: int) -> dict:
-    """Задержка: импульс -> выход; кросс-корреляция (устойчивее к шуму VAE)."""
+    """Измеряет задержку по положению пика после подачи импульса."""
     n = 2 * sr
     imp = torch.zeros(1, 1, n)
     pos = n // 4
@@ -133,14 +118,8 @@ def impulse_latency(model, device, sr: int) -> dict:
     }
 
 
-# ---------- Инференс ----------
-
 def encode_deterministic(model, xt: torch.Tensor) -> torch.Tensor:
-    """encode без сэмплирования постериора (posterior mean) — детерминирован.
-
-    Штатный model.encode() использует aten::randn (VAE-сэмпл); для baseline
-    берём mean, чтобы результат не зависел от seed.
-    """
+    """Берёт среднее постериора вместо случайного сэмпла энкодера."""
     bs = xt.shape[:-2]
     xp = model.pqmf(xt.reshape(-1, 1, xt.shape[-1]))
     xp = xp.reshape(bs + (-1, xp.shape[-1]))
@@ -152,7 +131,7 @@ def encode_deterministic(model, xt: torch.Tensor) -> torch.Tensor:
 
 
 def reconstruct(model, x: np.ndarray, device: str):
-    """Один encode+decode. Время замера отдельно на encode/decode."""
+    """Измеряет время кодирования и декодирования отдельно."""
     xt = torch.from_numpy(x).reshape(1, 1, -1).to(device)
     if device == "cuda":
         torch.cuda.synchronize()
@@ -164,7 +143,7 @@ def reconstruct(model, x: np.ndarray, device: str):
     t_enc = time.perf_counter() - t0
     t0 = time.perf_counter()
     with torch.no_grad():
-        y = model.decode(z, True)  # как в forward: decode(z, from_forward=True)
+        y = model.decode(z, True)
     if device == "cuda":
         torch.cuda.synchronize()
     t_dec = time.perf_counter() - t0
@@ -204,12 +183,11 @@ def main():
     y, t_enc, t_dec, z_shape = reconstruct(model, x, args.device)
     total_s = t_enc + t_dec
 
-    # Задержка: кросс-корреляция вход/выход (групповая задержка на реальном
-    # материале). Импульсный замер в отдельном процессе — см. --latency-only.
+    # Для аудиофайла ищем сдвиг по кросс-корреляции, для импульса — отдельно.
     n = min(len(x), len(y))
     L = 1 << int(np.ceil(np.log2(2 * n)))
     c = np.fft.irfft(np.fft.rfft(x[:n]) * np.conj(np.fft.rfft(y[:n])), L)
-    lag = int(np.argmax(np.abs(c[: int(0.5 * sr)])))  # поиск в пределах 0.5 с
+    lag = int(np.argmax(np.abs(c[: int(0.5 * sr)])))
     corr = float(c[lag] / (np.linalg.norm(x[:n]) * np.linalg.norm(y[:n]) + 1e-12))
 
     import subprocess

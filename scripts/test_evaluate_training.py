@@ -1,4 +1,3 @@
-"""Run: .venv/Scripts/python -m unittest discover -s scripts -p 'test_*.py'"""
 import unittest
 
 import numpy as np

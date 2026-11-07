@@ -1,8 +1,7 @@
 #!/usr/bin/env python
-"""Verify that GAN phase actually ran after the shortened warmup.
+"""Проверяет, что после сокращённого первого этапа GAN действительно работал.
 
-Only read locally trusted checkpoints (torch.load uses pickle). Usage:
-.venv/Scripts/python scripts/check_gan_run.py --run runs/stage1b_early_gan_105k
+Checkpoint загружается через pickle; использовать только доверенные файлы.
 """
 import argparse
 import json

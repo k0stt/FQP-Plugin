@@ -1,8 +1,7 @@
 #!/usr/bin/env python
-"""Check whether different reconstructions share a spurious prefix.
+"""Ищет общее начало в готовых реконструкциях.
 
-Read listening pairs, not model weights. The result is a diagnostic of the
-specific files and seed, not proof that the decoder always emits this sound.
+Результат относится только к проверенным файлам, а не ко всем выходам модели.
 """
 import argparse
 import json

@@ -1,9 +1,8 @@
 #!/usr/bin/env python
-"""Seeded checkpoint reconstruction on the fixed RAVE validation split.
+"""Оценивает checkpoint на фиксированных фрагментах или внешних файлах.
 
-The split is by preprocessed crop (seed 42), NOT by song: these scores do not
-measure generalization to unseen songs. Evaluates the un-exported 128-D model.
-Only load trusted local checkpoints (torch.load uses pickle).
+Внутренняя выборка разделена по фрагментам, а не по песням. Checkpoint
+загружается через pickle; использовать только доверенные файлы.
 """
 import argparse
 import hashlib
@@ -20,7 +19,7 @@ from rave_reconstruct import encode_deterministic, integrity, spectral_metrics
 
 
 def align_signals(x: np.ndarray, y: np.ndarray, sr: int):
-    """Positive lag means the output y is delayed relative to input x."""
+    """Положительный сдвиг означает, что выход запаздывает относительно входа."""
     n = min(len(x), len(y))
     x, y = x[:n], y[:n]
     lag_limit = min(n - 1, sr // 2)
@@ -36,7 +35,7 @@ def align_signals(x: np.ndarray, y: np.ndarray, sr: int):
 
 
 def listening_pair(x: np.ndarray, y: np.ndarray, sr: int, fade_ms: float):
-    """One common gain and identical edge fade; metrics use unfaded x/y."""
+    """Применяет общий gain и одинаковый fade; метрики считаются до обработки."""
     if fade_ms < 0 or fade_ms * sr / 1000 >= min(len(x), len(y)) / 2:
         raise ValueError("Fade must be nonnegative and shorter than half a crop")
     gain = min(1.0, 0.9 / max(float(np.max(np.abs(x))), float(np.max(np.abs(y))), 1e-12))
@@ -90,7 +89,7 @@ def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path =
                 raise ValueError(f"External file too short: {path}")
             examples.append((str(path), x))
     else:
-        # Training split is seeded inside RAVE; use unaugmented raw crops.
+        # Внутреннее разделение RAVE не проверяет новые песни.
         raw = dataset.AudioDataset("data/processed", n_channels=1)
         _, val = dataset.split_dataset(raw, 98)
         if count <= 0 or count > len(val):
@@ -100,7 +99,7 @@ def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path =
     with torch.inference_mode():
         for i, (source, x) in enumerate(examples):
             seed = 111 + (source if isinstance(source, int) else i)
-            # Center crop of identical length on every rerun; model context > 200ms.
+            # Берём центральный фрагмент одинаковой длины.
             n = 131072
             if x.shape[-1] < n:
                 raise ValueError(f"Validation crop {i} shorter than {n}")
@@ -109,8 +108,7 @@ def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path =
             xt = torch.from_numpy(reference.copy()).reshape(1, 1, -1)
             z = model.encode(xt)
             mean = z[:, :z.shape[1] // 2]
-            # GeneratorV2's NoiseGeneratorV2 samples torch.rand_like even in eval().
-            # Reset per crop AND per model to avoid order-dependent comparisons.
+            # Шумовая ветвь использует случайные значения даже в eval().
             with torch.random.fork_rng(devices=[]):
                 torch.manual_seed(seed)
                 y = model.decode(mean).squeeze().numpy()
