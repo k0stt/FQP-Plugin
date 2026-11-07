@@ -12,8 +12,25 @@ from pathlib import Path
 import gin
 import numpy as np
 import torch
+from scipy.signal import correlate, correlation_lags
 
 from rave_reconstruct import integrity, spectral_metrics
+
+
+def align_signals(x: np.ndarray, y: np.ndarray, sr: int):
+    """Positive lag means the output y is delayed relative to input x."""
+    n = min(len(x), len(y))
+    x, y = x[:n], y[:n]
+    lag_limit = min(n - 1, sr // 2)
+    c = correlate(y, x, mode="full", method="fft")
+    lags = correlation_lags(n, n, mode="full")
+    region = np.abs(lags) <= lag_limit
+    lag = int(lags[region][np.argmax(np.abs(c[region]))])
+    if lag >= 0:
+        x, y = x[:n - lag], y[lag:]
+    else:
+        x, y = x[-lag:], y[:n + lag]
+    return x, y, lag
 
 
 def evaluate(checkpoint: Path, config: Path, count: int) -> dict:
@@ -47,16 +64,25 @@ def evaluate(checkpoint: Path, config: Path, count: int) -> dict:
             check = integrity(y, model.sr)
             if check["n_nonfinite"] or check["rms"] <= 0:
                 raise ValueError(f"Invalid reconstruction {i}: {check}")
-            # Explicitly report UNALIGNED comparison, not a latency-compensated score.
             metrics = spectral_metrics(reference, y, model.sr)
+            aligned_x, aligned_y, lag = align_signals(reference, y, model.sr)
+            aligned = spectral_metrics(aligned_x, aligned_y, model.sr)
+            correlation = float(np.dot(aligned_x.astype(np.float64), aligned_y.astype(np.float64)) /
+                                (np.linalg.norm(aligned_x) * np.linalg.norm(aligned_y) + 1e-12))
             rows.append({"validation_index": int(val.indices[i]), "latent_frames": mean.shape[-1],
-                         "output_samples": len(y), "integrity": check, "quality_unaligned": metrics})
+                         "output_samples": len(y), "integrity": check, "quality_unaligned": metrics,
+                         "lag_samples_cross_correlation": lag, "aligned_correlation": correlation,
+                         "quality_aligned": aligned})
     return {"epoch": state["epoch"], "step": state["global_step"], "sr": model.sr,
             "latent_channels": model.latent_size, "samples": rows,
             "mean_spectral_convergence_unaligned": float(np.mean([
                 r["quality_unaligned"]["spectral_convergence_mean"] for r in rows])),
             "mean_lsd_unaligned": float(np.mean([
-                r["quality_unaligned"]["log_spectral_distance_mean"] for r in rows]))}
+                r["quality_unaligned"]["log_spectral_distance_mean"] for r in rows])),
+            "mean_spectral_convergence_aligned": float(np.mean([
+                r["quality_aligned"]["spectral_convergence_mean"] for r in rows])),
+            "mean_lsd_aligned": float(np.mean([
+                r["quality_aligned"]["log_spectral_distance_mean"] for r in rows]))}
 
 
 if __name__ == "__main__":

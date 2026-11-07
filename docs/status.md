@@ -1,6 +1,6 @@
 # Состояние проекта (2026-11-07)
 
-**Интеграционная ветка:** `main` (локально впереди `origin/main`, не выполнять push без разрешения); fix-ветка `fix/stage1b-training-smoke` слита fast-forward (`0628bba`, `6ba9246`), текущая исследовательская ветка `experiment/stage1b-evaluation`.
+**Интеграционная ветка:** `main` (локально впереди `origin/main`, не выполнять push без разрешения); fix-ветка `fix/stage1b-training-smoke` слита fast-forward (`0628bba`, `6ba9246`), документальная правка `1a19c8d` слита; активная ветка `experiment/stage1b-resume-eval`.
 
 ## Этапы и зависимости
 
@@ -21,4 +21,6 @@
 
 ` .venv\Scripts\python.exe scripts\check_training.py --checkpoint runs\smoke_stage1b\config_smoke_17211b00e7\version_2\checkpoints\best.ckpt ` — успешно. ` .venv\Scripts\python.exe scripts\evaluate_training.py --checkpoint runs\smoke_stage1b\config_smoke_17211b00e7\version_2\checkpoints\best.ckpt --count 1 ` — прошло; у практически необученного checkpoint SC=1.097, LSD=0.481 (без компенсации задержки; **не** показатель качества после обучения). Поскольку RAVE делит LMDB на crop-ы, а не на песни, эти validation-метрики не являются тестом на невиданных песнях. Логи, результаты и веса остаются вне Git.
 
-Обучение запущено в фоне в новом `runs/stage1b_20261107/` (до 5000 шагов, checkpoint каждые 500, batch 1, 131072 отсчётов, GPU 0); лог `runs/stage1b_20261107.log`. **Этап ещё не завершён.** Дождаться окончания/проверить результат, загрузить новый checkpoint, оценить реконструкцию на валидационных crop-ах, обновить журнал. Не использовать checkpoint от 02.11 как подтверждение этого обучения.
+Первый run `runs/stage1b_20261107/` завершён успешно на **5000 шагах**, checkpoint каждые 500; модель из `best.ckpt` — шаг 4451 (валидационный loss 8.0111), последний `epoch_5000.ckpt` — шаг 5000. По 3 фиксированным validation crop-ам после 5000 шагов SC=0.630, LSD=0.317 (без выравнивания); smoke после одного шага на тех же crop-ах SC=1.013, LSD=0.577. Все 3 конечные/ненулевые, у 2/3 peak > 1 (60 и 21 отсчёт > 0.999): **оценка уровня/качества не пройдена**, а вывод о готовности преждевременен. Это validation crop-ы того же корпуса, не новые песни. Исходный конфиг: GAN включается на 1 000 000 шагов, поэтому 5000 шагов недостаточно для заявленного полноценного обучения.
+
+Пробное возобновление `--ckpt .../epoch_5000.ckpt --max_steps 5001` подтвердило восстановление optimizer/scheduler/step без переобучения с нуля. Сейчас в фоне продолжение **того же checkpoint** до 20000 шагов: `runs/stage1b_20000/`, лог `runs/stage1b_20000.log`, checkpoints каждые 1000. Дождаться окончания и оценить новый checkpoint. Команда: `.venv\Scripts\python.exe scripts\evaluate_training.py --checkpoint <checkpoint> --count 3`. `python -m unittest discover -s scripts -p 'test_*.py'` проверяет обе полярности задержки. Корреляция после сдвига у первого crop ~0.14 — оценку его лага нельзя считать надёжной. **Этап 1b не завершён.** Не использовать checkpoint от 02.11 как подтверждение обучения на нынешнем датасете.
