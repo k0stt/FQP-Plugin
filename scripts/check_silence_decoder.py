@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Проверка отклика декодера на тишину и на начало одиночной ноты."""
+"""Проверка декодера: zero_input.wav — тишина, zero_input_reconstruction.wav — выход модели."""
 import argparse
 import json
 from pathlib import Path
@@ -21,6 +21,15 @@ def compare(x: np.ndarray, y: np.ndarray, sr: int) -> dict:
     return {"first_50ms_correlation": float(np.corrcoef(x[:int(.05 * sr)], y[:int(.05 * sr)])[0, 1]),
             "tail_2500_2800ms_correlation": float(np.corrcoef(
                 x[int(2.5 * sr):int(2.8 * sr)], y[int(2.5 * sr):int(2.8 * sr)])[0, 1])}
+
+
+def build_signals(x, other, full, second, silence, silence_noise_off, alt_seed, no_noise, contextual):
+    return {"input": x, "other_input": other, "full": full, "other_full": second,
+            "zero_input": np.zeros_like(x), "zero_input_reconstruction": silence,
+            "zero_input_noise_off": silence_noise_off,
+            "seed_777": alt_seed, "noise_off": no_noise, "context": contextual,
+            "zero_input_output_subtracted": full - silence,
+            "other_zero_input_output_subtracted": second - silence}
 
 
 def run(checkpoint: Path, config: Path, note: Path, other_note: Path, output: Path) -> dict:
@@ -60,10 +69,8 @@ def run(checkpoint: Path, config: Path, note: Path, other_note: Path, output: Pa
         alt_seed = decode(x, 777)
         no_noise = decode(x, 111, noise_off=True)
         contextual = decode(np.pad(x, (pad, pad)), 111)[pad:pad + len(x)]
-    signals = {"input": x, "other_input": other, "full": full, "other_full": second,
-               "silence": silence, "silence_noise_off": silence_noise_off,
-               "seed_777": alt_seed, "noise_off": no_noise, "context": contextual,
-               "silence_subtracted": full - silence, "other_silence_subtracted": second - silence}
+    signals = build_signals(x, other, full, second, silence, silence_noise_off,
+                            alt_seed, no_noise, contextual)
     if any(not np.isfinite(a).all() or len(a) != len(x) for a in signals.values()):
         raise ValueError("Неверная длина или неконечный сигнал")
     output.mkdir(parents=True, exist_ok=True)
@@ -81,7 +88,8 @@ def run(checkpoint: Path, config: Path, note: Path, other_note: Path, output: Pa
                                  "tail_1500_2500ms_rms": rms(a, sr, 1.5, 2.5)}
                           for name, a in signals.items()},
               "pairs": {name: compare(full, signals[name], sr)
-                        for name in ("other_full", "silence", "silence_noise_off", "seed_777", "noise_off", "context")},
+                        for name in ("other_full", "zero_input_reconstruction", "zero_input_noise_off",
+                                     "seed_777", "noise_off", "context")},
               "subtraction_control": {
                   "first": {"raw": spectral_metrics(x, full, sr),
                             "silence_subtracted": spectral_metrics(x, full - silence, sr)},
