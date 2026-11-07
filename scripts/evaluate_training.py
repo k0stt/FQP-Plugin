@@ -11,6 +11,7 @@ from pathlib import Path
 
 import gin
 import numpy as np
+import soundfile as sf
 import torch
 from scipy.signal import correlate, correlation_lags
 
@@ -33,7 +34,8 @@ def align_signals(x: np.ndarray, y: np.ndarray, sr: int):
     return x, y, lag
 
 
-def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path = None) -> dict:
+def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path = None,
+             audio_dir: Path = None) -> dict:
     import rave
     from rave import dataset
 
@@ -72,6 +74,15 @@ def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path =
             check = integrity(y, model.sr)
             if check["n_nonfinite"] or check["rms"] <= 0:
                 raise ValueError(f"Invalid reconstruction {i}: {check}")
+            if audio_dir is not None:
+                audio_dir.mkdir(parents=True, exist_ok=True)
+                # Shared gain; no independent normalization that could hide level errors.
+                gain = min(1.0, 0.9 / max(float(np.max(np.abs(reference))),
+                                            float(np.max(np.abs(y))), 1e-12))
+                sf.write(str(audio_dir / f"crop_{i:02d}_input.wav"), reference * gain,
+                         model.sr, subtype="FLOAT")
+                sf.write(str(audio_dir / f"crop_{i:02d}_reconstruction.wav"), y * gain,
+                         model.sr, subtype="FLOAT")
             metrics = spectral_metrics(reference, y, model.sr)
             aligned_x, aligned_y, lag = align_signals(reference, y, model.sr)
             aligned = spectral_metrics(aligned_x, aligned_y, model.sr)
@@ -115,9 +126,10 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=Path, default=Path("configs/lofi_v2_nwn.gin"))
     parser.add_argument("--count", type=int, default=3)
     parser.add_argument("--reference-model", type=Path, help="optional pretrained TorchScript baseline")
+    parser.add_argument("--audio-dir", type=Path, help="write matching gain input/output WAV pairs")
     parser.add_argument("--output", type=Path, default=Path("outputs/stage1b/evaluation.json"))
     args = parser.parse_args()
-    result = evaluate(args.checkpoint, args.config, args.count, args.reference_model)
+    result = evaluate(args.checkpoint, args.config, args.count, args.reference_model, args.audio_dir)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps({k: v for k, v in result.items() if k != "samples"}, indent=2))
