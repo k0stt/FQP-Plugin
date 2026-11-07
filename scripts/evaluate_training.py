@@ -35,7 +35,7 @@ def align_signals(x: np.ndarray, y: np.ndarray, sr: int):
 
 
 def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path = None,
-             audio_dir: Path = None) -> dict:
+             audio_dir: Path = None, external_files=None) -> dict:
     import rave
     from rave import dataset
 
@@ -48,28 +48,44 @@ def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path =
     baseline = torch.jit.load(str(reference_model), map_location="cpu").eval() if reference_model else None
     if baseline is not None and int(baseline.sr) != model.sr:
         raise ValueError("Reference model sample rate differs from training model")
-    # Training split is seeded inside RAVE; use unaugmented raw crops for evaluation.
-    raw = dataset.AudioDataset("data/processed", n_channels=1)
-    _, val = dataset.split_dataset(raw, 98)
-    if count <= 0 or count > len(val):
-        raise ValueError(f"count must be in [1, {len(val)}]")
+    if external_files:
+        import soxr
+        examples = []
+        for path in external_files:
+            info = sf.info(str(path))
+            start = max(0, (info.frames - int(3 * info.samplerate)) // 2)
+            x, source_sr = sf.read(str(path), start=start, frames=int(3 * info.samplerate),
+                                   always_2d=True, dtype="float32")
+            x = x.mean(axis=1)
+            if source_sr != model.sr:
+                x = soxr.resample(x, source_sr, model.sr)
+            if len(x) < 131072:
+                raise ValueError(f"External file too short: {path}")
+            examples.append((str(path), x))
+    else:
+        # Training split is seeded inside RAVE; use unaugmented raw crops.
+        raw = dataset.AudioDataset("data/processed", n_channels=1)
+        _, val = dataset.split_dataset(raw, 98)
+        if count <= 0 or count > len(val):
+            raise ValueError(f"count must be in [1, {len(val)}]")
+        examples = [(int(val.indices[i]), val[i][0]) for i in range(count)]
     rows = []
     with torch.inference_mode():
-        for i in range(count):
-            x = val[i]
+        for i, (source, x) in enumerate(examples):
+            seed = 111 + (source if isinstance(source, int) else i)
             # Center crop of identical length on every rerun; model context > 200ms.
             n = 131072
             if x.shape[-1] < n:
                 raise ValueError(f"Validation crop {i} shorter than {n}")
             start = (x.shape[-1] - n) // 2
-            reference = x[0, start:start + n]
+            reference = x[start:start + n]
             xt = torch.from_numpy(reference.copy()).reshape(1, 1, -1)
             z = model.encode(xt)
             mean = z[:, :z.shape[1] // 2]
             # GeneratorV2's NoiseGeneratorV2 samples torch.rand_like even in eval().
             # Reset per crop AND per model to avoid order-dependent comparisons.
             with torch.random.fork_rng(devices=[]):
-                torch.manual_seed(111 + int(val.indices[i]))
+                torch.manual_seed(seed)
                 y = model.decode(mean).squeeze().numpy()
             check = integrity(y, model.sr)
             if check["n_nonfinite"] or check["rms"] <= 0:
@@ -88,20 +104,21 @@ def evaluate(checkpoint: Path, config: Path, count: int, reference_model: Path =
             aligned = spectral_metrics(aligned_x, aligned_y, model.sr)
             correlation = float(np.dot(aligned_x.astype(np.float64), aligned_y.astype(np.float64)) /
                                 (np.linalg.norm(aligned_x) * np.linalg.norm(aligned_y) + 1e-12))
-            row = {"validation_index": int(val.indices[i]), "latent_frames": mean.shape[-1],
+            row = {"source": source, "latent_frames": mean.shape[-1],
                          "output_samples": len(y), "integrity": check, "quality_unaligned": metrics,
                          "lag_samples_cross_correlation": lag, "aligned_correlation": correlation,
                          "quality_aligned": aligned}
             if baseline is not None:
                 baseline_z = encode_deterministic(baseline, xt)
                 with torch.random.fork_rng(devices=[]):
-                    torch.manual_seed(111 + int(val.indices[i]))
+                    torch.manual_seed(seed)
                     baseline_y = baseline.decode(baseline_z, True).squeeze().numpy()
                 row["pretrained"] = {
                     "latent_shape": list(baseline_z.shape), "integrity": integrity(baseline_y, model.sr),
                     "quality_unaligned": spectral_metrics(reference, baseline_y, model.sr)}
             rows.append(row)
     report = {"epoch": state["epoch"], "step": state["global_step"], "sr": model.sr,
+            "evaluation_set": "external_files" if external_files else "rave_crop_validation",
             "latent_channels": model.latent_size, "samples": rows,
             "mean_spectral_convergence_unaligned": float(np.mean([
                 r["quality_unaligned"]["spectral_convergence_mean"] for r in rows])),
@@ -127,9 +144,11 @@ if __name__ == "__main__":
     parser.add_argument("--count", type=int, default=3)
     parser.add_argument("--reference-model", type=Path, help="optional pretrained TorchScript baseline")
     parser.add_argument("--audio-dir", type=Path, help="write matching gain input/output WAV pairs")
+    parser.add_argument("--external", type=Path, nargs="+", help="independent audio files (center 3 s)")
     parser.add_argument("--output", type=Path, default=Path("outputs/stage1b/evaluation.json"))
     args = parser.parse_args()
-    result = evaluate(args.checkpoint, args.config, args.count, args.reference_model, args.audio_dir)
+    result = evaluate(args.checkpoint, args.config, args.count, args.reference_model,
+                      args.audio_dir, args.external)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps({k: v for k, v in result.items() if k != "samples"}, indent=2))
