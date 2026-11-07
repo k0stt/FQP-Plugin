@@ -70,7 +70,7 @@ def prepare(output: Path, link_training: bool = False) -> dict:
         raise FileExistsError(f"Frozen manifest differs: {output}. Use a NEW version path.")
     output.parent.mkdir(parents=True, exist_ok=True)
     if not output.exists():
-        output.write_text(encoded, encoding="utf-8")
+        output.write_bytes(encoded.encode("utf-8"))
     if link_training:
         target = output.parent / "train"
         target.mkdir(exist_ok=True)
@@ -87,7 +87,7 @@ def prepare(output: Path, link_training: bool = False) -> dict:
     return {"train_files": len(train), "holdout_files": len(holdout),
             "train_hours": round(sum(x["seconds"] for x in train) / 3600, 3),
             "holdout_hours": round(sum(x["seconds"] for x in holdout) / 3600, 3),
-            "manifest_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            "manifest_sha256": sha256_file(output),
             "manifest_path": str(output)}
 
 
