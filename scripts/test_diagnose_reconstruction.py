@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from diagnose_reconstruction import compare
+from diagnose_reconstruction import compare, harmonic_energy_fraction
 
 
 class PitchTests(unittest.TestCase):
@@ -20,6 +20,14 @@ class PitchTests(unittest.TestCase):
         x = np.sin(2 * np.pi * 440 * np.arange(sr * 2) / sr)
         result = compare(x, x, sr)
         self.assertEqual(result["best_shift_semitones"], 0)
+
+    def test_harmonic_fraction_on_tone_and_noise(self):
+        sr = 44100
+        t = np.arange(sr) / sr
+        tone = np.sin(2 * np.pi * 440 * t)
+        noise = np.random.default_rng(5).normal(size=sr)
+        self.assertGreater(harmonic_energy_fraction(tone, sr),
+                           harmonic_energy_fraction(noise, sr))
 
 
 if __name__ == "__main__":
