@@ -19,4 +19,6 @@
 
 ## Проверка и следующий шаг
 
-` .venv\Scripts\python.exe scripts\check_training.py --checkpoint runs\smoke_stage1b\config_smoke_17211b00e7\version_2\checkpoints\best.ckpt ` — успешно. Логи smoke и все веса остаются вне Git. Далее: запустить ограниченное обучение с периодическими checkpoint в **новом** run, отслеживать ошибки/качество, затем оценить реконструкцию на отложенном материале и обновить журнал. Не использовать checkpoint от 02.11 как подтверждение этого обучения.
+` .venv\Scripts\python.exe scripts\check_training.py --checkpoint runs\smoke_stage1b\config_smoke_17211b00e7\version_2\checkpoints\best.ckpt ` — успешно. ` .venv\Scripts\python.exe scripts\evaluate_training.py --checkpoint runs\smoke_stage1b\config_smoke_17211b00e7\version_2\checkpoints\best.ckpt --count 1 ` — прошло; у практически необученного checkpoint SC=1.097, LSD=0.481 (без компенсации задержки; **не** показатель качества после обучения). Поскольку RAVE делит LMDB на crop-ы, а не на песни, эти validation-метрики не являются тестом на невиданных песнях. Логи, результаты и веса остаются вне Git.
+
+Обучение запущено в фоне в новом `runs/stage1b_20261107/` (до 5000 шагов, checkpoint каждые 500, batch 1, 131072 отсчётов, GPU 0); лог `runs/stage1b_20261107.log`. **Этап ещё не завершён.** Дождаться окончания/проверить результат, загрузить новый checkpoint, оценить реконструкцию на валидационных crop-ах, обновить журнал. Не использовать checkpoint от 02.11 как подтверждение этого обучения.
