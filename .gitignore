@@ -9,6 +9,8 @@ __pycache__/
 # Models & outputs (large/binary)
 models/
 outputs/
+data/
+runs/
 *.ts
 *.onnx
 *.pt
